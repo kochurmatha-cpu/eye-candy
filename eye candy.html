@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>WM Theme Viewer</title>
+<style>
+  :root{
+    --bg:#0a0a0a; --panel:#111114; --panel2:#16161a; --line:#232328;
+    --fg:#f4f4f5; --fg2:#a1a1aa; --fg3:#71717a;
+    --accent:#0033ff; --accent2:#3b5bff; --warn:#f5c518; --danger:#ff4d4d;
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  a{color:var(--accent2);text-decoration:none}
+  button{font:inherit;cursor:pointer}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+
+  header.top{
+    position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:14px;
+    padding:14px 20px;border-bottom:1px solid var(--line);
+    background:rgba(10,10,10,.75);backdrop-filter:blur(14px) saturate(1.2);
+  }
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.01em}
+  .dot{width:10px;height:10px;background:var(--accent);border-radius:50%;box-shadow:0 0 14px var(--accent)}
+  .spacer{flex:1}
+  .pill{padding:6px 10px;border:1px solid var(--line);border-radius:999px;color:var(--fg2);font-size:12px}
+  .btn{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:9px 14px;border-radius:10px;border:1px solid var(--line);
+    background:var(--panel2);color:var(--fg);font-weight:600;font-size:13px;
+    transition:background .15s,border-color .15s,transform .05s;
+  }
+  .btn:hover{background:#1c1c22;border-color:#30303a}
+  .btn:active{transform:scale(.98)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{background:var(--accent2);border-color:var(--accent2)}
+  .btn.ghost{background:transparent}
+  .btn.danger{color:var(--danger);border-color:#3a1a1a}
+  .btn.sm{padding:6px 10px;font-size:12px;border-radius:8px}
+
+  main{padding:22px 20px 80px;max-width:1600px;margin:0 auto}
+
+  /* Dropzone */
+  #drop{
+    border:1.5px dashed #2a2a32;border-radius:var(--radius);
+    padding:34px 20px;text-align:center;color:var(--fg2);
+    background:radial-gradient(1200px 400px at 50% -50%, rgba(0,51,255,.10), transparent 70%);
+    transition:border-color .2s,background .2s;
+  }
+  #drop.hot{border-color:var(--accent);background:radial-gradient(1200px 400px at 50% -50%, rgba(0,51,255,.25), transparent 70%)}
+  #drop h3{margin:0 0 6px;color:var(--fg);font-size:16px}
+  #drop p{margin:0;font-size:13px}
+  #drop .row{display:flex;gap:10px;justify-content:center;margin-top:14px;flex-wrap:wrap}
+
+  .meta{display:flex;align-items:center;gap:14px;margin:22px 0 12px;color:var(--fg2);font-size:13px;flex-wrap:wrap}
+  .meta b{color:var(--fg)}
+
+  /* Grid */
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+  @media (max-width:1100px){ .grid{grid-template-columns:repeat(3,1fr)} }
+  @media (max-width:820px){ .grid{grid-template-columns:repeat(2,1fr)} }
+  @media (max-width:480px){ .grid{grid-template-columns:repeat(2,1fr);gap:10px} }
+
+  .card{
+    position:relative;overflow:hidden;border:1px solid var(--line);
+    border-radius:var(--radius);background:var(--panel);
+    display:flex;flex-direction:column;
+  }
+  .thumb{
+    position:relative;aspect-ratio:16/11;overflow:hidden;
+    border-bottom:1px solid var(--line);
+    background:#000;
+  }
+  .thumb-inner{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+  .card .info{padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+  .card .name{font-weight:600;font-size:14px;line-height:1.25;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.5em}
+  .card .actions{display:flex;gap:8px}
+  .card .actions .btn{flex:1;justify-content:center}
+  .chip{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--fg3)}
+  .warn-badge{
+    position:absolute;top:8px;right:8px;z-index:5;
+    background:rgba(245,197,24,.14);color:var(--warn);
+    border:1px solid rgba(245,197,24,.4);border-radius:999px;
+    padding:3px 8px;font-size:10px;font-weight:600;
+  }
+
+  /* Toast */
+  #toast{
+    position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);
+    background:#1a1a20;border:1px solid #2a2a32;color:var(--fg);
+    padding:10px 14px;border-radius:10px;font-size:13px;opacity:0;pointer-events:none;
+    transition:opacity .2s,transform .2s;z-index:100;box-shadow:0 10px 40px rgba(0,0,0,.5);
+  }
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  /* ---------- Theme keyboard preview (shared) ---------- */
+  .kbd-stage{
+    position:absolute;inset:0;overflow:hidden;
+    display:flex;flex-direction:column;align-items:stretch;justify-content:flex-end;
+    padding:6px;gap:4px;
+    container-type:inline-size;
+  }
+  .kbd-stage.has-bg{background-size:cover;background-position:center}
+  .kb-toolbar{display:flex;gap:4px;padding:2px}
+  .kb-toolbar .tchip{
+    flex:1;height:14px;border-radius:999px;display:flex;align-items:center;justify-content:center;
+    font-size:7px;color:rgba(255,255,255,.55);border:1px solid rgba(255,255,255,.06);
+    overflow:hidden;
+  }
+  .kb-suggest{display:flex;gap:4px;padding:0 2px}
+  .kb-suggest .sg{
+    flex:1;height:12px;border-radius:6px;display:flex;align-items:center;justify-content:center;
+    font-size:7px;color:rgba(255,255,255,.6);overflow:hidden;
+  }
+  .kb-rows{display:flex;flex-direction:column;gap:4px;padding:2px}
+  .kb-row{display:flex;gap:4px;justify-content:center}
+  .kb-key{
+    flex:1;min-width:0;height:22px;border-radius:6px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:9px;font-weight:600;color:#fff;position:relative;overflow:hidden;
+    user-select:none;
+  }
+  .kb-key.w15{flex:1.5} .kb-key.w2{flex:2} .kb-key.w3{flex:3}
+  .kb-key.wide{flex:6}
+  .kb-key .label{position:relative;z-index:2;pointer-events:none}
+
+  /* Fullscreen view */
+  .view-wrap{padding-top:20px}
+  .view-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+  .view-head h1{font-size:22px;margin:0;font-weight:700;letter-spacing:-.01em}
+  .view-body{
+    display:grid;grid-template-columns:1.1fr .9fr;gap:18px;align-items:start;
+  }
+  @media (max-width:960px){ .view-body{grid-template-columns:1fr} }
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  .panel .ph{padding:10px 14px;border-bottom:1px solid var(--line);font-size:12px;color:var(--fg2);
+    display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .panel .pb{padding:14px}
+
+  /* Big preview stage */
+  .big-stage{position:relative;border-radius:0;overflow:hidden;min-height:440px;
+    display:flex;flex-direction:column;justify-content:flex-end;padding:14px;gap:8px}
+  .big-stage .kb-key{height:42px;border-radius:10px;font-size:14px}
+  .big-stage .kb-toolbar .tchip{height:26px;font-size:10px}
+  .big-stage .kb-suggest .sg{height:26px;font-size:11px}
+  .big-stage .kb-rows{gap:8px;padding:8px}
+  .big-stage .kb-row{gap:8px}
+  .big-stage .kb-toolbar{gap:8px}
+
+  .typing-area{
+    width:100%;min-height:60px;resize:vertical;background:rgba(255,255,255,.04);
+    color:#fff;border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:10px 12px;
+    font-family:inherit;font-size:15px;outline:none;
+  }
+  .typing-area:focus{border-color:var(--accent)}
+
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:12px;color:var(--fg2)}
+  .kv b{color:var(--fg);font-weight:600}
+
+  .warn-banner{
+    background:rgba(245,197,24,.08);border:1px solid rgba(245,197,24,.35);color:#f5e6a8;
+    padding:10px 14px;border-radius:10px;font-size:13px;margin-bottom:14px;line-height:1.5;
+  }
+  .warn-banner code{color:#fff;background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px}
+
+  .empty{color:var(--fg2);text-align:center;padding:60px 20px;font-size:14px}
+
+  /* Frost support via CSS var toggled per theme */
+  .frosty{backdrop-filter:blur(var(--frost-blur,0px)) saturate(var(--frost-sat,1)) brightness(var(--frost-bright,1));-webkit-backdrop-filter:blur(var(--frost-blur,0px)) saturate(var(--frost-sat,1)) brightness(var(--frost-bright,1))}
+
+  /* board effect animation */
+  @keyframes meldShift{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+  .boardfx{position:absolute;inset:0;z-index:0;pointer-events:none}
+
+  /* touchBloom / lighting overlay */
+  .fx-layer{position:absolute;inset:0;pointer-events:none;z-index:1;overflow:hidden}
+  .ripple{position:absolute;border-radius:50%;pointer-events:none;transform:translate(-50%,-50%) scale(0);
+    animation:rippleOut .7s ease-out forwards;z-index:3}
+  @keyframes rippleOut{to{transform:translate(-50%,-50%) scale(1);opacity:0}}
+  .bloom{position:absolute;border-radius:50%;pointer-events:none;transform:translate(-50%,-50%) scale(0);
+    animation:bloomOut .55s ease-out forwards;z-index:2}
+  @keyframes bloomOut{to{transform:translate(-50%,-50%) scale(1);opacity:0}}
+  .particle{position:absolute;pointer-events:none;border-radius:50%;z-index:4;
+    animation:partOut var(--dur,650ms) cubic-bezier(.2,.7,.3,1) forwards}
+  @keyframes partOut{
+    0%{transform:translate(-50%,-50%) translate(0,0) scale(1);opacity:1}
+    100%{transform:translate(-50%,-50%) translate(var(--dx),var(--dy)) scale(.2);opacity:0}
+  }
+
+  /* Download/View header link */
+  .crumbs{color:var(--fg2);font-size:13px;margin-bottom:10px}
+  .crumbs a:hover{color:var(--fg)}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand"><span class="dot"></span> WM Theme Viewer</div>
+  <span class="pill" id="countPill">0 themes</span>
+  <div class="spacer"></div>
+  <button class="btn ghost sm" id="btnClear" title="Remove all themes from this browser">Clear all</button>
+  <button class="btn primary sm" id="btnAdd">Add themes</button>
+</header>
+
+<main id="app"></main>
+
+<input type="file" id="fileInput" multiple accept=".json,.wmtheme.json,.zip,application/json,application/zip" hidden />
+<input type="file" id="dirInput" webkitdirectory directory multiple hidden />
+
+<div id="toast"></div>
+
+<script>
+/* =========================================================================
+   WM Theme Viewer — single-file app
+   ========================================================================= */
+
+/* -------------------- tiny helpers -------------------- */
+const $ = (s, r=document) => r.querySelector(s);
+const $$ = (s, r=document) => [...r.querySelectorAll(s)];
+const el = (tag, props={}, ...kids) => {
+  const n = document.createElement(tag);
+  for (const [k,v] of Object.entries(props||{})){
+    if (k === 'class') n.className = v;
+    else if (k === 'style' && typeof v === 'object') Object.assign(n.style, v);
+    else if (k.startsWith('on') && typeof v === 'function') n.addEventListener(k.slice(2), v);
+    else if (v !== undefined && v !== null) n.setAttribute(k, v);
+  }
+  for (const kid of kids){
+    if (kid == null) continue;
+    n.append(kid.nodeType ? kid : document.createTextNode(kid));
+  }
+  return n;
+};
+const toast = (msg) => {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove('show'), 2200);
+};
+
+/* -------------------- color conversion -------------------- */
+// Theme stores unsigned 32-bit ARGB as decimal int (e.g. 4282330391).
+function intToCss(n, fallback='transparent'){
+  if (n == null || n === '') return fallback;
+  let v = Number(n);
+  if (!Number.isFinite(v)) return fallback;
+  v = v >>> 0; // unsigned
+  const a = ((v >>> 24) & 0xff) / 255;
+  const r = (v >>> 16) & 0xff;
+  const g = (v >>> 8) & 0xff;
+  const b = v & 0xff;
+  if (a === 0) return 'transparent';
+  if (a === 1) return `rgb(${r} ${g} ${b})`;
+  return `rgba(${r},${g},${b},${a.toFixed(3)})`;
+}
+function intToArgbInt(n){ return n == null ? null : (Number(n) >>> 0); }
+
+/* -------------------- filename cleanup -------------------- */
+function cleanFilename(name){
+  // Strip "kyng" and "clink" (case-insensitive) plus resulting awkward separators.
+  let base = name.replace(/\.wmtheme\.json$/i,'').replace(/\.json$/i,'');
+  base = base.replace(/kyng/gi,'').replace(/clink/gi,'');
+  base = base.replace(/[\s_\-\.]{2,}/g,' ').trim();
+  base = base.replace(/^[\s_\-\.]+|[\s_\-\.]+$/g,'');
+  if (!base) base = 'theme';
+  return base + '.wmtheme.json';
+}
+
+/* -------------------- font loading -------------------- */
+const loadedFonts = new Set();
+function loadThemeFont(fontId){
+  if (!fontId || typeof fontId !== 'string') return;
+  const m = fontId.match(/^google:(.+)$/i);
+  if (!m) return;
+  const fam = m[1].trim();
+  if (loadedFonts.has(fam)) return;
+  loadedFonts.add(fam);
+  const href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(fam).replace(/%20/g,'+')}:wght@400;600;700&display=swap`;
+  const link = document.createElement('link');
+  link.rel = 'stylesheet'; link.href = href;
+  document.head.append(link);
+}
+
+/* -------------------- theme model -------------------- */
+// Normalize a raw theme JSON into a runtime object used by UI.
+function buildTheme(raw, sourceFilename){
+  const t = raw || {};
+  const frost = t.frost || {};
+  const kOverride = t.keyOverrides || {};
+
+  // resolve per-group overrides (fall back to global)
+  const pick = (group, key) => {
+    const g = kOverride[group];
+    if (g && g[key] !== null && g[key] !== undefined) return g[key];
+    return t[key];
+  };
+
+  const radius = (t.keyCornerRadiusDp ?? null);
+  const keyRadiusPx = radius != null ? Math.max(2, Math.min(24, radius)) : 8;
+  const enterOverride = kOverride.ENTER && kOverride.ENTER.shape;
+  const shapeToRadius = (shape) => {
+    switch ((shape||'').toUpperCase()){
+      case 'PILL': return 999;
+      case 'ROUNDED': return 10;
+      case 'SQUARE': return 3;
+      default: return null;
+    }
+  };
+  const enterRadius = shapeToRadius(enterOverride) ?? keyRadiusPx;
+
+  return {
+    raw,
+    id: t.id || ('custom_' + Math.random().toString(36).slice(2,10)),
+    name: (t.name || sourceFilename || 'Untitled theme').trim(),
+    dark: !!t.dark,
+    sourceFilename: sourceFilename || 'theme.wmtheme.json',
+
+    // colors
+    boardBg: intToCss(t.boardBackground, '#000'),
+    keyBg: intToCss(pick('LETTERS','background')),
+    keyText: intToCss(pick('LETTERS','text'), '#fff'),
+    modBg: intToCss(t.modifierKeyBackground, intToCss(t.keyBackground)),
+    modText: intToCss(t.modifierKeyText, intToCss(t.keyText, '#fff')),
+    enterBg: intToCss(pick('ENTER','background') ?? t.enterKeyBackground, intToCss(t.accent, '#0033ff')),
+    enterText: intToCss(pick('ENTER','text') ?? t.enterKeyText, '#fff'),
+    pressedBg: intToCss(t.pressedKeyBackground, intToCss(t.accent, '#3355ff')),
+    accent: intToCss(t.accent, '#3b5bff'),
+    chipBg: intToCss(t.chipBackground, 'rgba(255,255,255,.06)'),
+    chipText: intToCss(t.chipText, '#fff'),
+    suggestBg: intToCss(t.suggestionPillBackground, 'rgba(255,255,255,.06)'),
+    suggestText: intToCss(pick('LETTERS','text') ?? t.suggestionText, '#fff'),
+    popupBg: intToCss(t.popupBackground, '#222'),
+    popupText: intToCss(t.popupText, '#fff'),
+    toolbarBg: intToCss(t.toolbarBackground, 'transparent'),
+    toolbarIcon: intToCss(t.toolbarIcon, '#fff'),
+    toolCircleBg: intToCss(t.toolCircleBackground, 'rgba(255,255,255,.06)'),
+    divider: intToCss(t.dividerColor, 'rgba(255,255,255,.08)'),
+    keyBorder: intToCss(t.keyBorderColor, 'transparent'),
+    keyBorderW: t.keyBorderWidthDp || 0,
+    keyShape: (t.keyShape || 'ROUNDED').toUpperCase(),
+    keyRadiusPx,
+    enterRadiusPx: enterRadius === 999 ? 999 : enterRadius,
+
+    // typography
+    fontId: t.fontId || null,
+    fontScale: t.fontScale || 1,
+    boldLabels: !!t.boldKeyLabels,
+    hintFontScale: t.hintFontScale || 1,
+
+    // board & effects
+    boardEffect: t.boardEffect || null,
+    keyLighting: t.keyLighting || null,
+    touchBloom: t.touchBloom || null,
+    frost: frost.enabled ? frost : null,
+    keyEffect: t.keyEffect || null,
+    keyEffectColor: intToCss(t.keyEffectColor, null),
+    keyEffectParam: t.keyEffectParam || null,
+    keyEffectImages: Array.isArray(t.keyEffectImages) ? t.keyEffectImages : [],
+    backgroundImageBase64: t.backgroundImageBase64 || t.backgroundImage || null,
+    backgroundImageOpacity: t.backgroundImageOpacity ?? 1,
+    backgroundImageBlur: t.backgroundImageBlur ?? 0,
+    decals: t.decals || [],
+    keySkin: t.keySkin || null,
+    keyMaterial: t.keyMaterial || null,
+    soundStyle: t.soundStyle || null,
+    soundCustomId: t.soundCustomId || null,
+    animation: t.animation || 'NONE',
+
+    // eslint-ignore: keep raw overrides for mapping
+    keyOverrides: kOverride,
+    warnings: computeWarnings(t)
+  };
+}
+
+function computeWarnings(raw){
+  const w = [];
+  if (raw.keyMaterial) w.push('keyMaterial shader');
+  if (raw.keySkin && typeof raw.keySkin === 'string' && !/^data:/i.test(raw.keySkin)) w.push('keySkin texture');
+  if (raw.frost && (raw.frost.refraction || raw.frost.dispersion)) w.push('frost refraction/dispersion');
+  if (raw.keyEffect && raw.keyEffect !== 'NONE') { /* we do support generic particles */ }
+  return w;
+}
+
+/* -------------------- IndexedDB store -------------------- */
+const DB_NAME='wm-theme-viewer', STORE='themes', DB_VER=1;
+let _dbp = null;
+function db(){
+  if (_dbp) return _dbp;
+  _dbp = new Promise((res, rej) => {
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = () => req.result.createObjectStore(STORE, { keyPath:'id' });
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+  return _dbp;
+}
+async function dbAll(){
+  const d = await db();
+  return new Promise((res, rej) => {
+    const tx = d.transaction(STORE,'readonly').objectStore(STORE).getAll();
+    tx.onsuccess = () => res(tx.result || []);
+    tx.onerror = () => rej(tx.error);
+  });
+}
+async function dbPut(themeObj){
+  const d = await db();
+  const rec = { id: themeObj.id, raw: themeObj.raw, sourceFilename: themeObj.sourceFilename, addedAt: Date.now() };
+  return new Promise((res, rej) => {
+    const tx = d.transaction(STORE,'readwrite').objectStore(STORE).put(rec);
+    tx.onsuccess = () => res(); tx.onerror = () => rej(tx.error);
+  });
+}
+async function dbClear(){
+  const d = await db();
+  return new Promise((res, rej) => {
+    const tx = d.transaction(STORE,'readwrite').objectStore(STORE).clear();
+    tx.onsuccess = () => res(); tx.onerror = () => rej(tx.error);
+  });
+}
+
+/* -------------------- app state -------------------- */
+const state = { themes: [] };
+
+/* -------------------- ingestion -------------------- */
+const MAX_FILES = 50;
+const MAX_BYTES = 10 * 1024 * 1024;
+
+async function ingestFiles(fileList){
+  const files = [...fileList].filter(Boolean);
+  if (!files.length) return;
+
+  let totalBytes = files.reduce((s,f)=>s+(f.size||0), 0);
+  if (files.length > MAX_FILES) toast(`Only the first ${MAX_FILES} files will be processed.`);
+  if (totalBytes > MAX_BYTES) toast('Batch exceeds 10 MB — processing may take a moment.');
+
+  const limited = files.slice(0, MAX_FILES);
+  let added = 0, skipped = 0;
+
+  for (const f of limited){
+    const name = f.name || '';
+    try{
+      if (/\.zip$/i.test(name) || f.type === 'application/zip'){
+        const buf = await f.arrayBuffer();
+        const entries = await unzipEntries(buf);
+        for (const e of entries){
+          if (/\.wmtheme\.json$/i.test(e.name) || /\.json$/i.test(e.name)){
+            try{
+              const text = await e.text();
+              const raw = JSON.parse(text);
+              if (await addTheme(raw, baseName(e.name))) added++;
+              else skipped++;
+            }catch(_){ skipped++; }
+          }
+        }
+      } else if (/\.json$/i.test(name)){
+        const text = await f.text();
+        const raw = JSON.parse(text);
+        if (await addTheme(raw, name)) added++; else skipped++;
+      } else {
+        skipped++;
+      }
+    }catch(err){
+      console.warn('Failed on', name, err);
+      skipped++;
+    }
+  }
+
+  await refreshFromDb();
+  toast(`Added ${added} theme${added===1?'':'s'}${skipped?`, skipped ${skipped}`:''}.`);
+}
+
+async function addTheme(raw, sourceFilename){
+  if (!raw || typeof raw !== 'object') return false;
+  const theme = buildTheme(raw, sourceFilename);
+  // Avoid duplicate by id
+  if (state.themes.some(t => t.id === theme.id)) {
+    // still update sourceFilename reference? keep old
+    return false;
+  }
+  state.themes.push(theme);
+  loadThemeFont(theme.fontId);
+  await dbPut(theme);
+  return true;
+}
+
+function baseName(p){ const s = String(p).split(/[\\/]/); return s[s.length-1] || 'theme.wmtheme.json'; }
+
+/* -------------------- unzip (using native DecompressionStream) -------------------- */
+/* We parse the central directory of a standard .zip and use DecompressionStream
+   ('deflate-raw') — supported in modern Chrome/Edge/Firefox/Safari 16.4+. */
+async function unzipEntries(arrayBuffer){
+  const view = new DataView(arrayBuffer);
+  const bytes = new Uint8Array(arrayBuffer);
+  const len = bytes.length;
+  // find EOCD
+  let eocd = -1;
+  for (let i = len - 22; i >= Math.max(0, len - 65558); i--){
+    if (view.getUint32(i, true) === 0x06054b50){ eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('Not a valid zip');
+  const cdCount = view.getUint16(eocd + 10, true);
+  const cdSize = view.getUint32(eocd + 12, true);
+  const cdOffset = view.getUint32(eocd + 16, true);
+
+  const entries = [];
+  let p = cdOffset;
+  const dec = new TextDecoder('utf-8');
+  for (let i = 0; i < cdCount; i++){
+    if (view.getUint32(p, true) !== 0x02014b50) break;
+    const compression = view.getUint16(p + 10, true);
+    const compSize = view.getUint32(p + 20, true);
+    const uncompSize = view.getUint32(p + 24, true);
+    const nameLen = view.getUint16(p + 28, true);
+    const extraLen = view.getUint16(p + 30, true);
+    const commentLen = view.getUint16(p + 32, true);
+    const localHeaderOffset = view.getUint32(p + 42, true);
+    const nameBytes = bytes.subarray(p + 46, p + 46 + nameLen);
+    const name = dec.decode(nameBytes);
+    p += 46 + nameLen + extraLen + commentLen;
+
+    // read local header to compute data offset
+    const lh = localHeaderOffset;
+    if (view.getUint32(lh, true) !== 0x04034b50) continue;
+    const lnameLen = view.getUint16(lh + 26, true);
+    const lextraLen = view.getUint16(lh + 28, true);
+    const dataStart = lh + 30 + lnameLen + lextraLen;
+    const compData = bytes.subarray(dataStart, dataStart + compSize);
+
+    entries.push({
+      name,
+      compSize, uncompSize, compression,
+      async bytes(){
+        if (compression === 0) return compData.slice();
+        if (compression === 8){
+          if (typeof DecompressionStream === 'undefined') {
+            throw new Error('This browser cannot decompress deflate-raw. Try Chrome/Edge.');
+          }
+          const ds = new DecompressionStream('deflate-raw');
+          const stream = new Blob([compData]).stream().pipeThrough(ds);
+          return new Uint8Array(await new Response(stream).arrayBuffer());
+        }
+        throw new Error('Unsupported zip compression ' + compression);
+      },
+      async text(){ return new TextDecoder('utf-8').decode(await this.bytes()); }
+    });
+  }
+  return entries;
+}
+
+/* -------------------- rendering: grid -------------------- */
+function render(){
+  const app = $('#app');
+  app.innerHTML = '';
+  $('#countPill').textContent = `${state.themes.length} theme${state.themes.length===1?'':'s'}`;
+
+  // route
+  const hash = location.hash || '';
+  const m = hash.match(/^#\/theme\/(.+)$/);
+  if (m){
+    const id = decodeURIComponent(m[1]);
+    const theme = state.themes.find(t => t.id === id);
+    if (theme){ renderView(theme); return; }
+  }
+
+  // ---- grid page ----
+  const drop = el('div', { id:'drop' },
+    el('h3', {}, 'Drop .wmtheme.json or .zip files here'),
+    el('p', {}, `Up to ${MAX_FILES} files / 10 MB per batch. Zips are scanned for .wmtheme.json files.`),
+    el('div', { class:'row' },
+      el('button', { class:'btn primary', onclick:()=>$('#fileInput').click() }, 'Choose files'),
+      el('button', { class:'btn', onclick:()=>$('#dirInput').click() }, 'Choose folder')
+    )
+  );
+  drop.addEventListener('dragover', e=>{ e.preventDefault(); drop.classList.add('hot'); });
+  drop.addEventListener('dragleave', ()=>drop.classList.remove('hot'));
+  drop.addEventListener('drop', async e=>{
+    e.preventDefault(); drop.classList.remove('hot');
+    const files = await collectFromDataTransfer(e.dataTransfer);
+    ingestFiles(files);
+  });
+
+  app.append(drop);
+
+  const meta = el('div', { class:'meta' },
+    el('span', {}, [ 'Showing ', el('b',{},String(state.themes.length)), ' theme' + (state.themes.length===1?'':'s') ]),
+  );
+  app.append(meta);
+
+  if (!state.themes.length){
+    app.append(el('div', { class:'empty' }, 'No themes yet. Add some to get started.'));
+    return;
+  }
+
+  const grid = el('div', { class:'grid' });
+  for (const t of state.themes) grid.append(renderCard(t));
+  app.append(grid);
+}
+
+function renderCard(theme){
+  const card = el('div', { class:'card' });
+  const thumb = el('div', { class:'thumb' });
+  const inner = el('div', { class:'thumb-inner' });
+  inner.append(buildKeyboard(theme, { size:'mini' }));
+  thumb.append(inner);
+  if (theme.warnings.length){
+    thumb.append(el('div', { class:'warn-badge', title: theme.warnings.join(', ') }, 'approx'));
+  }
+
+  const info = el('div', { class:'info' },
+    el('div', { class:'chip' }, theme.dark ? 'dark' : 'light'),
+    el('div', { class:'name', title: theme.name }, theme.name),
+    el('div', { class:'actions' },
+      el('button', { class:'btn sm', onclick:()=>{ location.hash = '#/theme/' + encodeURIComponent(theme.id); } }, 'View'),
+      el('button', { class:'btn sm primary', onclick:()=>downloadTheme(theme) }, 'Download')
+    )
+  );
+
+  card.append(thumb, info);
+  return card;
+}
+
+function downloadTheme(theme){
+  const blob = new Blob([JSON.stringify(theme.raw, null, 0)], { type:'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = cleanFilename(theme.sourceFilename || (theme.name + '.wm
