@@ -341,3 +341,14 @@ main{padding:22px 20px 80px;max-width:1600px;margin:0 auto}
   height:100%;
   display:block;
 }
+/* prevent the label from ever escaping the keycap bounds */
+.kb-key.has-skin{
+  position:relative;
+  overflow:hidden;
+}
+.kb-key.has-skin > .label{
+  /* if a theme has an extreme labelShift, clamp visually */
+  max-width:100%;
+  text-align:center;
+  font-size:inherit;
+}
