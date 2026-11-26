@@ -297,3 +297,71 @@ main{padding:22px 20px 80px;max-width:1600px;margin:0 auto}
 
 .empty{color:var(--fg2);text-align:center;padding:60px 20px;font-size:14px}
 .empty a{color:var(--accent2);text-decoration:underline;cursor:pointer}
+/* =========================================================================
+   Perf additions: pagination bar, lazy placeholders, filter hoist
+   ========================================================================= */
+
+/* ---------- filter bar (hoisted above grid) ---------- */
+.filterbar{
+  display:flex;align-items:center;gap:12px;
+  margin:22px 0 12px;flex-wrap:wrap;
+}
+.filterbar .count{color:var(--fg2);font-size:13px}
+.filterbar .count b{color:var(--fg)}
+.filterbar .spacer{flex:1}
+.filterbar input[type=search]{
+  background:var(--panel2);border:1px solid var(--line);color:var(--fg);
+  padding:7px 11px;border-radius:8px;font-size:13px;outline:none;
+  min-width:220px;max-width:100%;
+}
+.filterbar input[type=search]:focus{border-color:var(--accent)}
+
+/* ---------- card lazy placeholder ---------- */
+.card.placeholder .thumb{
+  display:flex;flex-direction:column;justify-content:flex-end;
+  padding:10px;gap:6px;
+}
+.card.placeholder .ph-swatches{display:flex;gap:6px}
+.card.placeholder .ph-sw{
+  width:22px;height:22px;border-radius:6px;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);
+}
+.card.placeholder .ph-name{
+  font-size:12px;color:rgba(255,255,255,.7);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+
+/* backstop: browser skips rendering off-screen cards */
+.card{ content-visibility:auto; contain-intrinsic-size: 260px 220px; }
+
+/* ---------- hidden state for filter (no teardown) ---------- */
+.card.filtered-out{ display:none; }
+
+/* ---------- pagination bar ---------- */
+.pagination{
+  display:flex;align-items:center;gap:10px;justify-content:center;
+  margin:26px 0 10px;flex-wrap:wrap;color:var(--fg2);font-size:13px;
+}
+.pagination .pages{display:flex;gap:6px;align-items:center}
+.pagination button{
+  min-width:34px;height:34px;padding:0 10px;border-radius:8px;
+  border:1px solid var(--line);background:var(--panel2);color:var(--fg);
+  font-size:13px;font-weight:600;cursor:pointer;
+  transition:background .15s,border-color .15s;
+}
+.pagination button:hover:not([disabled]){background:#1c1c22;border-color:#30303a}
+.pagination button[disabled]{opacity:.4;cursor:not-allowed}
+.pagination button.active{
+  background:var(--accent);border-color:var(--accent);color:#fff;
+}
+.pagination .ellip{padding:0 4px;color:var(--fg3)}
+
+.perpage{
+  display:flex;align-items:center;gap:6px;margin-left:auto;
+  color:var(--fg2);font-size:12px;
+}
+.perpage select{
+  background:var(--panel2);border:1px solid var(--line);color:var(--fg);
+  padding:5px 8px;border-radius:8px;font-size:12px;outline:none;cursor:pointer;
+}
+.perpage select:focus{border-color:var(--accent)}
