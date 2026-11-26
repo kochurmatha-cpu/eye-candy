@@ -1,10 +1,13 @@
 /* =========================================================================
-   WM Theme Viewer — script
+   WM Theme Viewer — script (v2)
+   - fixes color token fallback (LETTERS/ENTER/etc -> correct global field)
+   - alphabetical sort
+   - variants: clickable accent dots, per-variant preview, full-file download
+   - keySkin SVG renderer (slots: letter/special/enter/space/popup/board)
    ========================================================================= */
 
-/* -------------------- tiny helpers -------------------- */
+/* -------------------- helpers -------------------- */
 const $ = (s, r=document) => r.querySelector(s);
-const $$ = (s, r=document) => [...r.querySelectorAll(s)];
 const el = (tag, props={}, ...kids) => {
   const n = document.createElement(tag);
   for (const [k,v] of Object.entries(props||{})){
@@ -26,7 +29,7 @@ const toast = (msg) => {
   clearTimeout(_tt); _tt = setTimeout(()=>t.classList.remove('show'), 2400);
 };
 
-/* -------------------- color conversion (ARGB int → CSS) -------------------- */
+/* -------------------- color: ARGB int -> css -------------------- */
 function intToCss(n, fallback='transparent'){
   if (n == null || n === '') return fallback;
   const v = Number(n);
@@ -40,8 +43,32 @@ function intToCss(n, fallback='transparent'){
   if (a === 1) return `rgb(${r} ${g} ${b})`;
   return `rgba(${r},${g},${b},${a.toFixed(3)})`;
 }
+function intToRgba(n){
+  if (n == null) return null;
+  const u = Number(n) >>> 0;
+  return {
+    a: ((u >>> 24) & 0xff) / 255,
+    r: (u >>> 16) & 0xff,
+    g: (u >>> 8) & 0xff,
+    b: u & 0xff
+  };
+}
+const clamp01 = v => Math.max(0, Math.min(1, v));
+const to255 = v => Math.round(clamp01(v) * 255);
+function rgbToCss({r,g,b,a}){ return `rgba(${to255(r/255)},${to255(g/255)},${to255(b/255)},${(a??1).toFixed(3)})`; }
 
-/* -------------------- filename cleanup -------------------- */
+/* color ops in linear-ish sRGB space (matches Android lighten/darken feel closely enough) */
+function applyColorOp(rgba, op, arg){
+  if (!rgba) return { r:128, g:128, b:128, a:1 };
+  const { r, g, b, a } = rgba;
+  const x = Number(arg) || 0;
+  if (op === 'alpha') return { r, g, b, a: clamp01(x) };
+  if (op === 'darken') return { r: r*(1-x), g: g*(1-x), b: b*(1-x), a };
+  if (op === 'lighten') return { r: r + (255-r)*x, g: g + (255-g)*x, b: b + (255-b)*x, a };
+  return { r, g, b, a };
+}
+
+/* -------------------- filename -------------------- */
 function cleanFilename(name){
   let base = String(name||'theme')
     .replace(/\.wmtheme\.json$/i,'')
@@ -54,7 +81,7 @@ function cleanFilename(name){
 }
 const baseName = p => { const s = String(p).split(/[\\/]/); return s[s.length-1] || 'theme.wmtheme.json'; };
 
-/* -------------------- font loading -------------------- */
+/* -------------------- fonts -------------------- */
 const loadedFonts = new Set();
 function loadThemeFont(fontId){
   if (!fontId || typeof fontId !== 'string') return;
@@ -69,72 +96,110 @@ function loadThemeFont(fontId){
   document.head.append(link);
 }
 
+/* =========================================================================
+   Color resolution: fixed fallback chain per override group
+   ========================================================================= */
+const GROUP_GLOBALS = {
+  LETTERS: { background:'keyBackground', text:'keyText',            border:'keyBorderColor', popupBackground:'popupBackground', popupText:'popupText', hint:'hintText' },
+  SHIFT:   { background:'modifierKeyBackground', text:'modifierKeyText', border:'keyBorderColor' },
+  DELETE:  { background:'modifierKeyBackground', text:'modifierKeyText', border:'keyBorderColor' },
+  SYMBOLS: { background:'modifierKeyBackground', text:'modifierKeyText', border:'keyBorderColor' },
+  EMOJI:   { background:'modifierKeyBackground', text:'modifierKeyText', border:'keyBorderColor' },
+  ENTER:   { background:'enterKeyBackground',   text:'enterKeyText',   border:'keyBorderColor' },
+  SPACE:   { background:'keyBackground',        text:'keyText',        border:'keyBorderColor' },
+  EDIT_LEFT:  { background:'keyBackground', text:'keyText', border:'keyBorderColor' },
+  EDIT_RIGHT: { background:'keyBackground', text:'keyText', border:'keyBorderColor' },
+  EDIT_UP:    { background:'keyBackground', text:'keyText', border:'keyBorderColor' },
+  EDIT_DOWN:  { background:'keyBackground', text:'keyText', border:'keyBorderColor' },
+  EDIT_SELECT:{ background:'keyBackground', text:'keyText', border:'keyBorderColor' },
+  EDIT_HOME:  { background:'keyBackground', text:'keyText', border:'keyBorderColor' },
+  EDIT_END:   { background:'keyBackground', text:'keyText', border:'keyBorderColor' },
+  EDIT_COPY:  { background:'keyBackground', text:'keyText', border:'keyBorderColor' },
+  EDIT_PASTE: { background:'keyBackground', text:'keyText', border:'keyBorderColor' },
+  EDIT_BACKSPACE:{ background:'keyBackground', text:'keyText', border:'keyBorderColor' },
+  EDIT_SELECT_ALL:{ background:'keyBackground', text:'keyText', border:'keyBorderColor' }
+};
+
+// Resolve a raw theme field for a given group+property, honoring keyOverrides.
+// Fallback: override[prop] -> override[background/text alias] -> global[field]
+function pickColor(raw, group, prop){
+  const ov = (raw.keyOverrides || {})[group] || {};
+  const g = GROUP_GLOBALS[group] || {};
+  // 1) direct override
+  if (ov[prop] != null) return ov[prop];
+  // 2) alias override (text->text, background->background)
+  // (already covered by 1)
+  // 3) global field for this group+prop
+  const gfield = g[prop];
+  if (gfield && raw[gfield] != null) return raw[gfield];
+  // 4) LETTERS global as last resort for text/background
+  if (prop === 'text' && raw.keyText != null) return raw.keyText;
+  if (prop === 'background' && raw.keyBackground != null) return raw.keyBackground;
+  return null;
+}
+function pickBorderColor(raw, group){
+  return pickColor(raw, group, 'border');
+}
+
 /* -------------------- theme model -------------------- */
-function buildTheme(raw, sourceFilename){
-  const t = raw || {};
-  const frost = t.frost || {};
+function groupForSlotName(k){
+  switch(k){
+    case 'ENTER': return 'ENTER';
+    case 'SHIFT': return 'SHIFT';
+    case 'DEL': return 'DELETE';
+    case 'SYM': return 'SYMBOLS';
+    case 'LANG': return 'EMOJI';
+    case 'SPACE': return 'SPACE';
+    default: return 'LETTERS';
+  }
+}
+function slotForGroup(group){
+  switch(group){
+    case 'ENTER': return 'enter';
+    case 'SHIFT': case 'DELETE': case 'SYMBOLS': case 'EMOJI': return 'special';
+    case 'SPACE': return 'space';
+    default: return 'letter';
+  }
+}
+
+/* -------------------- theme build -------------------- */
+function buildTheme(raw, sourceFilename, variantIndex=0){
+  const variants = Array.isArray(raw.variants) ? raw.variants : [];
+  const varObj = variantIndex > 0 && variants[variantIndex-1] ? variants[variantIndex-1] : null;
+  const t = varObj ? { ...raw, ...varObj } : raw;
   const kOverride = t.keyOverrides || {};
-  const pick = (group, key) => {
-    const g = kOverride[group];
-    if (g && g[key] !== null && g[key] !== undefined) return g[key];
-    return t[key];
-  };
+  const frost = t.frost || {};
 
-  const shapeToRadius = (shape) => {
-    switch ((shape||'').toUpperCase()){
-      case 'PILL': return 999;
-      case 'ROUNDED': return 10;
-      case 'SQUARE': return 3;
-      case 'CIRCLE': return 999;
-      default: return null;
-    }
-  };
-  const baseRadius = t.keyCornerRadiusDp != null ? Math.max(2, Math.min(28, t.keyCornerRadiusDp)) : null;
-  const keyRadiusPx = baseRadius ?? shapeToRadius(t.keyShape) ?? 8;
-  const enterRadiusPx = shapeToRadius(kOverride.ENTER?.shape) ?? keyRadiusPx;
+  // For dots
+  const variantDots = [{ label: raw.name || 'Base', color: raw.accent, index: 0 }]
+    .concat(variants.map((v,i) => ({ label: v.name || `Variant ${i+1}`, color: v.accent ?? raw.accent, index: i+1 })));
 
-  const warnings = [];
-  if (t.keyMaterial) warnings.push('keyMaterial shader');
-  if (t.keySkin && typeof t.keySkin === 'string' && !/^data:/i.test(t.keySkin)) warnings.push('keySkin texture');
-  if (t.frost && (t.frost.refraction || t.frost.dispersion)) warnings.push('frost refraction/dispersion');
-  if (t.decals && Array.isArray(t.decals) && t.decals.length) warnings.push('decals');
-
-  return {
-    raw,
-    id: t.id || ('local_' + Math.random().toString(36).slice(2,10)),
+  const baseTheme = {
+    raw, // full file (all variants) — used for download
+    id: raw.id || ('local_' + Math.random().toString(36).slice(2,10)),
     name: (t.name || sourceFilename || 'Untitled theme').trim(),
-    dark: !!t.dark,
+    variantIndex,
+    variantCount: 1 + variants.length,
+    variantDots,
     sourceFilename: sourceFilename || 'theme.wmtheme.json',
+    dark: !!t.dark,
 
     boardBg: intToCss(t.boardBackground, '#000'),
-    keyBg: intToCss(pick('LETTERS','background'), '#222'),
-    keyText: intToCss(pick('LETTERS','text'), '#fff'),
-    modBg: intToCss(t.modifierKeyBackground, intToCss(t.keyBackground, '#333')),
-    modText: intToCss(t.modifierKeyText, intToCss(t.keyText, '#fff')),
-    enterBg: intToCss(kOverride.ENTER?.background ?? t.enterKeyBackground, intToCss(t.accent, '#0033ff')),
-    enterText: intToCss(kOverride.ENTER?.text ?? t.enterKeyText, '#fff'),
-    pressedBg: intToCss(t.pressedKeyBackground, intToCss(t.accent, '#3355ff')),
     accent: intToCss(t.accent, '#3b5bff'),
+    pressedBg: intToCss(t.pressedKeyBackground, intToCss(t.accent, '#3355ff')),
     chipBg: intToCss(t.chipBackground, 'rgba(255,255,255,.06)'),
     chipText: intToCss(t.chipText, '#fff'),
     suggestBg: intToCss(t.suggestionPillBackground, 'rgba(255,255,255,.06)'),
-    suggestText: intToCss(pick('LETTERS','text') ?? t.suggestionText, '#fff'),
-    popupBg: intToCss(t.popupBackground, '#222'),
-    popupText: intToCss(t.popupText, '#fff'),
-    toolbarBg: intToCss(t.toolbarBackground, 'transparent'),
+    suggestText: intToCss(t.suggestionText, null),
     toolbarIcon: intToCss(t.toolbarIcon, '#fff'),
     toolCircleBg: intToCss(t.toolCircleBackground, 'rgba(255,255,255,.06)'),
     divider: intToCss(t.dividerColor, 'rgba(255,255,255,.08)'),
-    keyBorder: intToCss(t.keyBorderColor, 'transparent'),
-    keyBorderW: t.keyBorderWidthDp || 0,
-    keyShape: (t.keyShape || 'ROUNDED').toUpperCase(),
-    keyRadiusPx,
-    enterRadiusPx,
 
+    keyShape: (t.keyShape || 'ROUNDED').toUpperCase(),
+    keyRadiusPx: t.keyCornerRadiusDp != null ? Math.max(2, Math.min(28, t.keyCornerRadiusDp)) : 8,
+    boldLabels: !!t.boldKeyLabels,
     fontId: t.fontId || null,
     fontScale: t.fontScale || 1,
-    boldLabels: !!t.boldKeyLabels,
-    hintFontScale: t.hintFontScale || 1,
 
     boardEffect: t.boardEffect || null,
     keyLighting: t.keyLighting || null,
@@ -143,16 +208,40 @@ function buildTheme(raw, sourceFilename){
     keyEffect: t.keyEffect || null,
     keyEffectColor: intToCss(t.keyEffectColor, null),
     keyEffectParam: t.keyEffectParam || null,
-    keyEffectImages: Array.isArray(t.keyEffectImages) ? t.keyEffectImages : [],
     backgroundImage: t.backgroundImageBase64 || t.backgroundImage || null,
     backgroundImageOpacity: t.backgroundImageOpacity ?? 1,
     backgroundImageBlur: t.backgroundImageBlur ?? 0,
+
+    keySkin: t.keySkin || null,
+    keyMaterial: t.keyMaterial || null,
+
     soundStyle: t.soundStyle || null,
     soundCustomId: t.soundCustomId || null,
     animation: t.animation || 'NONE',
-    keyOverrides: kOverride,
-    warnings
+
+    // raw fields for the skin color-token resolver:
+    _raw: t,
+
+    warnings: (() => {
+      const w = [];
+      if (t.keyMaterial) w.push('keyMaterial shader');
+      if (t.frost && (t.frost.refraction || t.frost.dispersion)) w.push('frost refraction/dispersion');
+      return w;
+    })()
   };
+
+  // convenience resolved colors per group
+  baseTheme.colors = {};
+  for (const group of Object.keys(GROUP_GLOBALS)){
+    baseTheme.colors[group] = {
+      bg: intToCss(pickColor(t, group, 'background'), '#222'),
+      fg: intToCss(pickColor(t, group, 'text'), '#fff'),
+      border: intToCss(pickBorderColor(t, group), 'transparent')
+    };
+  }
+  baseTheme.keyBorderW = t.keyBorderWidthDp || 0;
+
+  return baseTheme;
 }
 
 /* -------------------- IndexedDB -------------------- */
@@ -193,16 +282,13 @@ async function dbClear(){
 }
 
 /* -------------------- state -------------------- */
-const state = { themes: [], query: '' };
+const state = { themes: [], query: '', selectedVariant: {} };
 
 /* -------------------- ingestion -------------------- */
-const MAX_FILES = 50;
-const MAX_BYTES = 10 * 1024 * 1024;
-
+const MAX_FILES = 50, MAX_BYTES = 10*1024*1024;
 async function ingestFiles(fileList){
   const files = [...fileList].filter(Boolean);
   if (!files.length) return;
-
   const totalBytes = files.reduce((s,f)=>s+(f.size||0), 0);
   if (files.length > MAX_FILES) toast(`Only the first ${MAX_FILES} files will be processed.`);
   if (totalBytes > MAX_BYTES) toast('Batch exceeds 10 MB — this may take a moment.');
@@ -227,29 +313,21 @@ async function ingestFiles(fileList){
       } else if (/\.json$/i.test(name)){
         const raw = JSON.parse(await f.text());
         if (await addTheme(raw, name)) added++; else skipped++;
-      } else {
-        skipped++;
-      }
-    }catch(err){
-      console.warn('Failed on', name, err);
-      skipped++;
-    }
+      } else skipped++;
+    }catch(err){ console.warn('Failed on', name, err); skipped++; }
   }
-
   await refreshFromDb();
   toast(`Added ${added} theme${added===1?'':'s'}${skipped?`, skipped ${skipped}`:''}.`);
 }
-
 async function addTheme(raw, sourceFilename){
   if (!raw || typeof raw !== 'object') return false;
-  const theme = buildTheme(raw, sourceFilename);
+  const theme = buildTheme(raw, sourceFilename, 0);
   if (state.themes.some(t => t.id === theme.id)) return false;
   state.themes.push(theme);
   loadThemeFont(theme.fontId);
   await dbPut(theme);
   return true;
 }
-
 async function refreshFromDb(){
   const rows = await dbAll();
   const seen = new Set();
@@ -257,14 +335,18 @@ async function refreshFromDb(){
   for (const r of rows){
     if (seen.has(r.id)) continue;
     seen.add(r.id);
-    const theme = buildTheme(r.raw, r.sourceFilename);
+    const theme = buildTheme(r.raw, r.sourceFilename, 0);
     state.themes.push(theme);
     loadThemeFont(theme.fontId);
   }
+  sortThemes();
   render();
 }
+function sortThemes(){
+  state.themes.sort((a,b)=> a.name.localeCompare(b.name, undefined, { sensitivity:'base', numeric:true }));
+}
 
-/* -------------------- unzip (native DecompressionStream) -------------------- */
+/* -------------------- unzip (native) -------------------- */
 async function unzipEntries(arrayBuffer){
   const view = new DataView(arrayBuffer);
   const bytes = new Uint8Array(arrayBuffer);
@@ -276,7 +358,6 @@ async function unzipEntries(arrayBuffer){
   if (eocd < 0) throw new Error('Not a valid zip');
   const cdCount = view.getUint16(eocd + 10, true);
   const cdOffset = view.getUint32(eocd + 16, true);
-
   const entries = [];
   let p = cdOffset;
   const dec = new TextDecoder('utf-8');
@@ -290,18 +371,16 @@ async function unzipEntries(arrayBuffer){
     const localHeaderOffset = view.getUint32(p + 42, true);
     const name = dec.decode(bytes.subarray(p + 46, p + 46 + nameLen));
     p += 46 + nameLen + extraLen + commentLen;
-
     const lnameLen = view.getUint16(localHeaderOffset + 26, true);
     const lextraLen = view.getUint16(localHeaderOffset + 28, true);
     const dataStart = localHeaderOffset + 30 + lnameLen + lextraLen;
     const compData = bytes.subarray(dataStart, dataStart + compSize);
-
     entries.push({
       name,
       async bytes(){
         if (compression === 0) return compData.slice();
         if (compression === 8){
-          if (typeof DecompressionStream === 'undefined') throw new Error('This browser cannot decompress deflate-raw. Try Chrome/Edge.');
+          if (typeof DecompressionStream === 'undefined') throw new Error('Browser lacks deflate-raw support.');
           const ds = new DecompressionStream('deflate-raw');
           const stream = new Blob([compData]).stream().pipeThrough(ds);
           return new Uint8Array(await new Response(stream).arrayBuffer());
@@ -314,66 +393,179 @@ async function unzipEntries(arrayBuffer){
   return entries;
 }
 
-/* -------------------- dataTransfer folder walking -------------------- */
+/* -------------------- drag-drop folder walk -------------------- */
 async function collectFromDataTransfer(dt){
   if (!dt) return [];
   const items = dt.items ? [...dt.items] : [];
   if (!items.length) return [...dt.files];
-  const out = [];
-  const walkers = [];
+  const out = [], walkers = [];
   for (const item of items){
     if (item.kind !== 'file') continue;
     const entry = item.webkitGetAsEntry && item.webkitGetAsEntry();
     if (entry) walkers.push(walkEntry(entry, out));
-    else {
-      const f = item.getAsFile && item.getAsFile();
-      if (f) out.push(f);
-    }
+    else { const f = item.getAsFile && item.getAsFile(); if (f) out.push(f); }
   }
   await Promise.all(walkers);
   return out;
 }
 function walkEntry(entry, out){
   return new Promise(resolve => {
-    if (entry.isFile){
-      entry.file(f => { out.push(f); resolve(); }, () => resolve());
-    } else if (entry.isDirectory){
+    if (entry.isFile){ entry.file(f => { out.push(f); resolve(); }, () => resolve()); }
+    else if (entry.isDirectory){
       const reader = entry.createReader();
       const all = [];
       const read = () => reader.readEntries(async entries => {
-        if (!entries.length){
-          await Promise.all(all.map(e => walkEntry(e, out)));
-          resolve(); return;
-        }
-        all.push(...entries);
-        read();
+        if (!entries.length){ await Promise.all(all.map(e => walkEntry(e, out))); resolve(); return; }
+        all.push(...entries); read();
       }, () => resolve());
       read();
     } else resolve();
   });
 }
 
-/* -------------------- keyboard markup -------------------- */
+/* =========================================================================
+   keySkin SVG renderer
+   ========================================================================= */
+let _svgUid = 0;
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+// Resolve a skin color token -> rgba object {r,g,b,a}
+// Grammar: "token" or "token:op:arg"
+// Tokens: face, label, shadow, previewFill, board
+function resolveSkinColor(rawTheme, slotName, tokenStr, groupColors){
+  if (!tokenStr || typeof tokenStr !== 'string') return {r:0,g:0,b:0,a:0};
+  const parts = tokenStr.split(':');
+  const token = parts[0];
+  const op = parts[1] || null;
+  const arg = parts[2] || null;
+
+  // Base color as unsigned ARGB int, based on token
+  let baseInt = null;
+  const faceInt   = groupColors?.backgroundInt ?? rawTheme.keyBackground ?? null;   // 'face' for letter keys
+  const labelInt  = groupColors?.textInt       ?? rawTheme.keyText       ?? null;
+  const shadowInt = rawTheme.keyShadowColor ?? null;
+  const previewInt= rawTheme.popupBackground ?? rawTheme.keyBackground ?? null;
+  const boardInt  = rawTheme.boardBackground ?? null;
+
+  // Slots special/enter use label as the "face" and face as inner highlight — handled by skin itself,
+  // we just expose the tokens as the theme intends:
+  switch(token){
+    case 'face':        baseInt = faceInt; break;
+    case 'label':       baseInt = labelInt; break;
+    case 'shadow':      baseInt = shadowInt; break;
+    case 'previewFill': baseInt = previewInt; break;
+    case 'board':       baseInt = boardInt; break;
+    default:            baseInt = faceInt; break;
+  }
+
+  const rgba = intToRgba(baseInt) || { r:128, g:128, b:128, a:1 };
+  if (!op) return rgba;
+  return applyColorOp(rgba, op, parseFloat(arg) || 0);
+}
+
+function buildSkinSvg(rawTheme, slot, groupColors, opts={}){
+  if (!slot || !Array.isArray(slot.layers)) return null;
+  const size = slot.size || [100, 112];
+  const w = size[0], h = size[1];
+  const uid = 's' + (++_svgUid);
+
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('class', 'skin-svg');
+  svg.setAttribute('xmlns', SVG_NS);
+
+  const defs = document.createElementNS(SVG_NS, 'defs');
+  svg.append(defs);
+
+  const groupEls = [];
+
+  slot.layers.forEach((layer, i) => {
+    if (!layer || !layer.d) return;
+
+    // fill resolution
+    let fillAttr = 'transparent';
+    const fill = layer.fill;
+    if (fill && typeof fill === 'object'){
+      if (fill.color){
+        const c = resolveSkinColor(rawTheme, slot, fill.color, groupColors);
+        fillAttr = rgbToCss(c);
+      } else if (Array.isArray(fill.linear) && Array.isArray(fill.stops)){
+        const [x1,y1,x2,y2] = fill.linear;
+        const gradId = `${uid}_g${i}`;
+        const lg = document.createElementNS(SVG_NS, 'linearGradient');
+        lg.setAttribute('id', gradId);
+        lg.setAttribute('gradientUnits', 'userSpaceOnUse');
+        lg.setAttribute('x1', x1); lg.setAttribute('y1', y1);
+        lg.setAttribute('x2', x2); lg.setAttribute('y2', y2);
+        for (const st of fill.stops){
+          const c = resolveSkinColor(rawTheme, slot, st.color, groupColors);
+          const stop = document.createElementNS(SVG_NS, 'stop');
+          stop.setAttribute('offset', String(st.at));
+          stop.setAttribute('stop-color', rgbToCss(c));
+          lg.append(stop);
+        }
+        defs.append(lg);
+        fillAttr = `url(#${gradId})`;
+      }
+    }
+
+    const p = document.createElementNS(SVG_NS, 'path');
+    p.setAttribute('d', layer.d);
+    p.setAttribute('fill', fillAttr);
+    if (layer.opacity != null) p.setAttribute('opacity', String(layer.opacity));
+    svg.append(p);
+    groupEls.push(p);
+  });
+
+  // Label shift (label position offset inside slot)
+  const labelShift = slot.labelShift || [0,0];
+
+  return { svg, w, h, labelShift };
+}
+
+/* =========================================================================
+   Keyboard
+   ========================================================================= */
 const ROWS = [
   ['q','w','e','r','t','y','u','i','o','p'],
   ['a','s','d','f','g','h','j','k','l'],
   ['SHIFT','z','x','c','v','b','n','m','DEL'],
-  ['SYM','LANG','SPACE','.', 'ENTER']
+  ['SYM','LANG','SPACE','.','ENTER']
 ];
+
+function keyLabel(k){
+  switch(k){
+    case 'SHIFT': return '⇧';
+    case 'DEL': return '⌫';
+    case 'SYM': return '?123';
+    case 'LANG': return '🌐';
+    case 'SPACE': return 'space';
+    case 'ENTER': return 'return';
+    default: return k;
+  }
+}
+
+function fontFamilyFor(theme){
+  if (theme.fontId){
+    const m = theme.fontId.match(/^google:(.+)$/i);
+    if (m) return `"${m[1].trim()}", system-ui, sans-serif`;
+  }
+  return 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+}
 
 function buildKeyboard(theme, opts={}){
   const big = opts.size === 'big';
   const stage = el('div', { class:'kbd-stage' + (big ? ' relative' : '') });
   if (!big) stage.classList.add('has-bg');
   stage.style.fontFamily = fontFamilyFor(theme);
-
-  // background
   if (theme.boardBg) stage.style.background = theme.boardBg;
 
   // background image
   if (theme.backgroundImage){
     const bg = el('div', { class:'bg-img' });
-    bg.style.backgroundImage = `url(${JSON.stringify(theme.backgroundImage).slice(1,-1)})`;
+    const url = theme.backgroundImage.startsWith('data:') ? theme.backgroundImage : `url("${theme.backgroundImage}")`;
+    bg.style.backgroundImage = url.startsWith('url(') ? url : `url(${JSON.stringify(url).slice(1,-1)})`;
     bg.style.backgroundSize = 'cover';
     bg.style.backgroundPosition = 'center';
     bg.style.opacity = String(theme.backgroundImageOpacity);
@@ -381,7 +573,7 @@ function buildKeyboard(theme, opts={}){
     stage.append(bg);
   }
 
-  // board effect (animated gradient behind)
+  // board effect
   const be = theme.boardEffect;
   if (be && Array.isArray(be.colors) && be.colors.length){
     const fx = el('div', { class:'boardfx' });
@@ -390,9 +582,19 @@ function buildKeyboard(theme, opts={}){
     fx.style.background = `linear-gradient(120deg, ${c1}, ${c2}, ${c1})`;
     fx.style.backgroundSize = '300% 300%';
     const speed = Math.max(0.1, Number(be.speed) || 0.5);
-    fx.style.animation = `meldShift ${(12 / speed).toFixed(1)}s ease-in-out infinite`;
+    fx.style.animation = `meldShift ${(12/speed).toFixed(1)}s ease-in-out infinite`;
     fx.style.opacity = String(Math.max(0.15, Math.min(1, Number(be.intensity) || 0.6)));
     stage.append(fx);
+  }
+
+  // board slot (skin background art)
+  if (theme.keySkin?.slots?.board){
+    const boardArt = buildSkinSvg(theme._raw, theme.keySkin.slots.board, { backgroundInt: theme._raw.boardBackground }, {});
+    if (boardArt){
+      const wrap = el('div', { class:'skin-board' });
+      wrap.append(boardArt.svg);
+      stage.append(wrap);
+    }
   }
 
   // frost
@@ -403,7 +605,7 @@ function buildKeyboard(theme, opts={}){
     stage.style.setProperty('--frost-bright', String(1 + (Number(f.brightness) || 0)));
   }
 
-  // fx layer for ripple/bloom/particles
+  // effect layer
   const fx = el('div', { class:'fx-layer' });
   stage.append(fx);
   stage._fx = fx;
@@ -419,12 +621,12 @@ function buildKeyboard(theme, opts={}){
   });
   stage.append(toolbar);
 
-  // suggestion row
+  // suggestions
   const sugg = el('div', { class:'kb-suggest' });
   ['The','quick','brown','fox'].forEach(word => {
     const sg = el('div', { class:'sg' }, word);
     sg.style.background = theme.suggestBg;
-    sg.style.color = theme.suggestText;
+    if (theme.suggestText) sg.style.color = theme.suggestText;
     sugg.append(sg);
   });
   stage.append(sugg);
@@ -434,76 +636,92 @@ function buildKeyboard(theme, opts={}){
   for (const row of ROWS){
     const r = el('div', { class:'kb-row' });
     for (const k of row){
-      const isWide = k === 'SPACE';
-      const keyEl = el('div', { class:'kb-key' + (isWide ? ' wide' : '') });
-      const label = el('span', { class:'label' }, keyLabel(k));
-      keyEl.append(label);
-      styleKey(theme, keyEl, k);
-      if (!big){
-        // in mini cards, pressing isn't interactive
-      } else {
-        keyEl.style.cursor = 'pointer';
-        const pressHandler = () => pressKey(theme, keyEl, stage);
-        keyEl.addEventListener('pointerdown', pressHandler);
-      }
+      const keyEl = buildKey(theme, k, { big, stage });
       r.append(keyEl);
     }
     rows.append(r);
   }
   stage.append(rows);
-
   return stage;
 }
 
-function keyLabel(k){
-  switch(k){
-    case 'SHIFT': return '⇧';
-    case 'DEL': return '⌫';
-    case 'SYM': return '?123';
-    case 'LANG': return '🌐';
-    case 'SPACE': return 'space';
-    case 'ENTER': return 'return';
-    default: return k;
+function buildKey(theme, k, { big, stage }){
+  const isSpace = k === 'SPACE';
+  const group = groupForSlotName(k);
+  const cols = theme.colors[group];
+
+  const keyEl = el('div', { class:'kb-key' + (isSpace ? ' wide' : '') });
+  const label = el('span', { class:'label' }, keyLabel(k));
+  keyEl.append(label);
+
+  // determine skin slot
+  let slotName = slotForGroup(group);
+  let slot = theme.keySkin?.slots?.[slotName] || null;
+
+  if (slot){
+    // SVG cap
+    const groupColors = {
+      backgroundInt: pickColor(theme._raw, group, 'background'),
+      textInt:       pickColor(theme._raw, group, 'text')
+    };
+    const art = buildSkinSvg(theme._raw, slot, groupColors, { big });
+    if (art){
+      const svg = art.svg;
+      keyEl.classList.add('has-skin');
+      keyEl.style.background = 'transparent';
+      keyEl.style.borderRadius = '0';
+      keyEl.insertBefore(svg, label);
+
+      // place label at labelShift (converted to % of slot h)
+      const [lx, ly] = art.labelShift;
+      label.style.position = 'absolute';
+      label.style.left = '50%';
+      label.style.top = `${(ly / art.h) * 100}%`;
+      label.style.transform = 'translate(-50%,-50%)';
+      label.style.color = cols.fg;
+      label.style.zIndex = '3';
+      if (theme.boldLabels) label.style.fontWeight = '700';
+      // label position is on the inner face — shift up to make room for the label area
+      // (slot labelShift uses same units as size; we treat it as y offset from top)
+    }
+  } else {
+    // CSS rectangle fallback
+    keyEl.style.background = cols.bg;
+    keyEl.style.color = cols.fg;
+    keyEl.style.borderRadius = (theme.keyShape === 'PILL' ? '999px' : theme.keyRadiusPx + 'px');
+    if (theme.keyBorderW && cols.border !== 'transparent'){
+      keyEl.style.border = `${theme.keyBorderW}px solid ${cols.border}`;
+    }
+    if (theme.boldLabels) keyEl.style.fontWeight = '700';
   }
+
+  if (theme.frost) keyEl.classList.add('frosty');
+
+  // press handling
+  if (big){
+    keyEl.style.cursor = 'pointer';
+    keyEl.addEventListener('pointerdown', () => pressKey(theme, keyEl, stage, slot));
+  }
+
+  return keyEl;
 }
 
-function styleKey(theme, node, k){
-  let bg, fg, radius;
-  if (k === 'ENTER'){ bg = theme.enterBg; fg = theme.enterText; radius = theme.enterRadiusPx; }
-  else if (['SHIFT','DEL','SYM','LANG'].includes(k)){ bg = theme.modBg; fg = theme.modText; radius = theme.keyRadiusPx; }
-  else if (k === 'SPACE'){ bg = theme.keyBg; fg = theme.keyText; radius = theme.keyRadiusPx; }
-  else { bg = theme.keyBg; fg = theme.keyText; radius = theme.keyRadiusPx; }
-
-  node.style.background = bg;
-  node.style.color = fg;
-  node.style.borderRadius = (radius === 999 ? '999px' : radius + 'px');
-  if (theme.keyBorderW && theme.keyBorder !== 'transparent'){
-    node.style.border = `${theme.keyBorderW}px solid ${theme.keyBorder}`;
-  }
-  if (theme.boldLabels) node.style.fontWeight = '700';
-  if (theme.frost) node.classList.add('frosty');
-  node.dataset.pressedBg = theme.pressedBg;
-  node.dataset.accent = theme.accent;
-}
-
-function fontFamilyFor(theme){
-  if (theme.fontId){
-    const m = theme.fontId.match(/^google:(.+)$/i);
-    if (m) return `"${m[1].trim()}", system-ui, sans-serif`;
-  }
-  return 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
-}
-
-/* -------------------- key press effects -------------------- */
-function pressKey(theme, keyEl, stage){
-  // press state
+/* -------------------- press effects -------------------- */
+function pressKey(theme, keyEl, stage, slot){
+  // CSS fallback press
   const origBg = keyEl.style.background;
-  keyEl.style.background = keyEl.dataset.pressedBg || origBg;
-  keyEl.classList.add('pressed');
-  setTimeout(()=>{
-    keyEl.classList.remove('pressed');
-    keyEl.style.background = origBg;
-  }, 110);
+  if (!slot){
+    keyEl.style.background = theme.pressedBg;
+    keyEl.classList.add('pressed');
+    setTimeout(() => {
+      keyEl.classList.remove('pressed');
+      keyEl.style.background = origBg;
+    }, 110);
+  } else {
+    // SVG squash/translate press
+    keyEl.classList.add('pressed-skin');
+    setTimeout(() => keyEl.classList.remove('pressed-skin'), 140);
+  }
 
   const rect = stage.getBoundingClientRect();
   const krect = keyEl.getBoundingClientRect();
@@ -511,7 +729,6 @@ function pressKey(theme, keyEl, stage){
   const cy = krect.top - rect.top + krect.height/2;
   const layer = stage._fx;
 
-  // keyLighting
   const kl = theme.keyLighting;
   if (kl && layer){
     const intensity = Number(kl.intensity) || 0.6;
@@ -530,7 +747,6 @@ function pressKey(theme, keyEl, stage){
     }
   }
 
-  // touchBloom
   const tb = theme.touchBloom;
   if (tb && layer){
     const b = document.createElement('div');
@@ -545,7 +761,6 @@ function pressKey(theme, keyEl, stage){
     setTimeout(()=>b.remove(), 700);
   }
 
-  // keyEffect particles
   if (theme.keyEffect && theme.keyEffect !== 'NONE' && layer){
     const p = theme.keyEffectParam || {};
     const count = Math.min(24, Math.max(4, Number(p.count) || 8));
@@ -578,14 +793,18 @@ function render(){
   const countPill = $('#countPill');
   if (countPill) countPill.textContent = `${state.themes.length} theme${state.themes.length===1?'':'s'}`;
 
-  const hash = location.hash || '';
-  const m = hash.match(/^#\/theme\/(.+)$/);
+  const m = (location.hash || '').match(/^#\/theme\/(.+)$/);
   if (m){
     const id = decodeURIComponent(m[1]);
-    const theme = state.themes.find(t => t.id === id);
-    if (theme){ renderView(theme); return; }
-    app.append(el('div', { class:'empty' },
-      'Theme not found. ', el('a', { href:'#', onclick:()=>{location.hash='';} }, 'Back to all themes.')));
+    const base = state.themes.find(t => t.id === id);
+    if (!base){
+      app.append(el('div', { class:'empty' },
+        'Theme not found. ', el('a', { href:'#', onclick:()=>{location.hash='';} }, 'Back to all themes.')));
+      return;
+    }
+    const vIdx = state.selectedVariant[base.id] || 0;
+    const theme = buildTheme(base.raw, base.sourceFilename, vIdx);
+    renderView(theme);
     return;
   }
   renderGrid(app);
@@ -614,10 +833,7 @@ function renderGrid(app){
   );
   const filter = el('div', { class:'filter' });
   const input = el('input', { type:'search', placeholder:'Filter by name…', value: state.query });
-  input.addEventListener('input', () => {
-    state.query = input.value;
-    renderGrid($('#app'));
-  });
+  input.addEventListener('input', () => { state.query = input.value; renderGrid($('#app')); });
   filter.append(input);
   meta.append(filter);
   app.append(meta);
@@ -635,11 +851,15 @@ function renderGrid(app){
   }
 
   const grid = el('div', { class:'grid' });
-  for (const t of list) grid.append(renderCard(t));
+  for (const base of list){
+    const vIdx = state.selectedVariant[base.id] || 0;
+    const theme = buildTheme(base.raw, base.sourceFilename, vIdx);
+    grid.append(renderCard(base, theme, vIdx));
+  }
   app.append(grid);
 }
 
-function renderCard(theme){
+function renderCard(base, theme, vIdx){
   const card = el('div', { class:'card' });
   const thumb = el('div', { class:'thumb' });
   const inner = el('div', { class:'thumb-inner' });
@@ -649,19 +869,42 @@ function renderCard(theme){
     thumb.append(el('div', { class:'warn-badge',
       title: 'Approximate preview: ' + theme.warnings.join(', ') }, 'approx'));
   }
+
+  // name row with variant dots
+  const nameRow = el('div', { class:'name-row' });
+  nameRow.append(el('div', { class:'name', title: theme.name }, theme.name));
+  if (base.variantCount > 1){
+    const dots = el('div', { class:'variant-dots' });
+    base.variantDots.forEach(d => {
+      const dot = el('button', {
+        class: 'vdot' + (d.index === vIdx ? ' active' : ''),
+        title: d.label,
+        'aria-label': d.label,
+        onclick: (e) => {
+          e.stopPropagation();
+          state.selectedVariant[base.id] = d.index;
+          render();
+        }
+      });
+      dot.style.background = intToCss(d.color, '#888');
+      dots.append(dot);
+    });
+    nameRow.append(dots);
+  }
+
   const info = el('div', { class:'info' },
-    el('div', { class:'chip' }, theme.dark ? 'dark' : 'light'),
-    el('div', { class:'name', title: theme.name }, theme.name),
+    el('div', { class:'chip' }, (theme.dark ? 'dark' : 'light') + (base.variantCount > 1 ? ` · ${vIdx === 0 ? 'base' : 'variant ' + vIdx}` : '')),
+    nameRow,
     el('div', { class:'actions' },
-      el('button', { class:'btn sm', onclick:()=>{ location.hash = '#/theme/' + encodeURIComponent(theme.id); } }, 'View'),
-      el('button', { class:'btn sm primary', onclick:()=>downloadTheme(theme) }, 'Download')
+      el('button', { class:'btn sm', onclick:()=>{ location.hash = '#/theme/' + encodeURIComponent(base.id); } }, 'View'),
+      el('button', { class:'btn sm primary', onclick:()=>downloadTheme(base) }, 'Download')
     )
   );
   card.append(thumb, info);
   return card;
 }
 
-/* -------------------- view page -------------------- */
+/* -------------------- view -------------------- */
 function renderView(theme){
   const app = $('#app');
   const wrap = el('div', { class:'view-wrap' });
@@ -681,20 +924,19 @@ function renderView(theme){
   if (theme.warnings.length){
     wrap.append(el('div', { class:'warn-banner' },
       el('b', {}, 'Approximate preview. '),
-      'This theme uses features that cannot be fully reproduced in the browser: ',
+      'These features cannot be fully reproduced in the browser: ',
       theme.warnings.map(w => el('code', {}, w)).reduce((a,b)=>[a, ', ', b]),
       '. Open in the WM keyboard app to see the exact result.'
     ));
   }
 
   const body = el('div', { class:'view-body' });
-
-  // left: big keyboard + typing area
   const left = el('div');
   const panelBig = el('div', { class:'panel' });
   panelBig.append(el('div', { class:'ph' },
     el('span', {}, 'Preview'),
-    el('span', { class:'mono', style:{fontSize:'11px',color:'#71717a'} }, theme.dark ? 'dark' : 'light')
+    el('span', { class:'mono', style:{fontSize:'11px',color:'#71717a'} },
+      (theme.dark ? 'dark' : 'light') + (theme.variantIndex > 0 ? ` · variant ${theme.variantIndex}` : ''))
   ));
   const bigStage = buildKeyboard(theme, { size:'big' });
   bigStage.classList.add('big-stage');
@@ -706,16 +948,15 @@ function renderView(theme){
   const typePanel = el('div', { class:'panel', style:{marginTop:'14px'} });
   typePanel.append(el('div', { class:'ph' }, el('span', {}, 'Type to test')));
   const typeBody = el('div', { class:'pb' });
-  const ta = el('textarea', { class:'typing-area', placeholder:'Type here… keys above will glow when you click them.' });
+  const ta = el('textarea', { class:'typing-area', placeholder:'Type here… click keys above to see press effects.' });
   typeBody.append(ta);
   typePanel.append(typeBody);
   left.append(typePanel);
 
-  // right: info
   const right = el('div', { class:'panel' });
   right.append(el('div', { class:'ph' }, el('span', {}, 'Theme info')));
   const infoBody = el('div', { class:'pb' });
-  const kv = el('div', { class:'kv' },
+  infoBody.append(el('div', { class:'kv' },
     el('b',{},'Name'), el('span',{}, theme.name),
     el('b',{},'ID'), el('code',{}, theme.id),
     el('b',{},'Source'), el('code',{}, theme.sourceFilename),
@@ -723,27 +964,45 @@ function renderView(theme){
     el('b',{},'Font'), el('span',{}, theme.fontId || '—'),
     el('b',{},'Key shape'), el('span',{}, theme.keyShape),
     el('b',{},'Accent'), el('span',{}, theme.accent),
-    el('b',{},'Sound'), el('span',{}, theme.soundStyle || '—'),
-    el('b',{},'Animation'), el('span',{}, theme.animation)
-  );
-  infoBody.append(kv);
+    el('b',{},'keySkin'), el('span',{}, theme.keySkin ? 'yes (SVG)' : 'no'),
+    el('b',{},'Sound'), el('span',{}, theme.soundStyle || '—')
+  ));
   right.append(infoBody);
+
+  // variant selector on view page
+  if (theme.variantCount > 1){
+    const vpanel = el('div', { class:'panel', style:{marginTop:'14px'} });
+    vpanel.append(el('div', { class:'ph' }, el('span', {}, 'Variants')));
+    const vb = el('div', { class:'pb' });
+    const row = el('div', { class:'variant-row' });
+    theme.variantDots.forEach(d => {
+      const b = el('button', {
+        class: 'variant-pill' + (d.index === theme.variantIndex ? ' active' : ''),
+        onclick: () => { state.selectedVariant[theme.id] = d.index; render(); }
+      });
+      const dot = el('span', { class:'vdot' });
+      dot.style.background = intToCss(d.color, '#888');
+      b.append(dot, document.createTextNode(' ' + d.label));
+      row.append(b);
+    });
+    vb.append(row);
+    vpanel.append(vb);
+    right.append(vpanel);
+  }
 
   body.append(left, right);
   wrap.append(body);
   app.append(wrap);
-
-  // auto-focus typing area
   setTimeout(()=>{ try{ ta.focus(); }catch(_){} }, 50);
 }
 
 /* -------------------- download -------------------- */
-function downloadTheme(theme){
-  const blob = new Blob([JSON.stringify(theme.raw, null, 0)], { type:'application/json' });
+function downloadTheme(base){
+  const blob = new Blob([JSON.stringify(base.raw, null, 0)], { type:'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = cleanFilename(theme.sourceFilename || theme.name);
+  a.download = cleanFilename(base.sourceFilename || base.name);
   document.body.append(a);
   a.click();
   a.remove();
@@ -753,28 +1012,20 @@ function downloadTheme(theme){
 /* -------------------- wiring -------------------- */
 function boot(){
   $('#fileInput').addEventListener('change', async e => {
-    const files = [...e.target.files]; e.target.value = '';
-    ingestFiles(files);
+    const files = [...e.target.files]; e.target.value = ''; ingestFiles(files);
   });
   $('#dirInput').addEventListener('change', async e => {
-    const files = [...e.target.files]; e.target.value = '';
-    ingestFiles(files);
+    const files = [...e.target.files]; e.target.value = ''; ingestFiles(files);
   });
   $('#btnAdd').addEventListener('click', ()=>$('#fileInput').click());
   $('#btnClear').addEventListener('click', async () => {
     if (!state.themes.length) return;
     if (!confirm('Remove all themes from this browser?')) return;
-    await dbClear();
-    state.themes = [];
-    render();
-    toast('Cleared.');
+    await dbClear(); state.themes = []; state.selectedVariant = {}; render(); toast('Cleared.');
   });
-  $('#brandLink').addEventListener('click', e => {
-    e.preventDefault(); location.hash = '';
-  });
+  $('#brandLink').addEventListener('click', e => { e.preventDefault(); location.hash = ''; });
   window.addEventListener('hashchange', render);
   refreshFromDb();
 }
-
 document.addEventListener('DOMContentLoaded', boot);
 if (document.readyState !== 'loading') boot();
