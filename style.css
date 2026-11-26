@@ -241,3 +241,103 @@ main{padding:22px 20px 80px;max-width:1600px;margin:0 auto}
 
 .empty{color:var(--fg2);text-align:center;padding:60px 20px;font-size:14px}
 .empty a{color:var(--accent2);text-decoration:underline;cursor:pointer}
+
+/* =========================================================================
+   v2 additions: SVG keycap skins, variant dots, name row
+   ========================================================================= */
+
+/* ---------- name row + variant dots ---------- */
+.name-row{display:flex;align-items:center;gap:8px}
+.name-row .name{flex:1;min-width:0}
+.variant-dots{display:flex;gap:4px;flex-shrink:0}
+.vdot{
+  width:14px;height:14px;border-radius:50%;padding:0;
+  border:2px solid transparent;background:#888;cursor:pointer;
+  box-shadow:0 0 0 1px rgba(255,255,255,.15) inset;
+  transition:transform .1s,border-color .15s;
+}
+.vdot:hover{transform:scale(1.15)}
+.vdot.active{border-color:#fff;box-shadow:0 0 0 2px rgba(0,51,255,.6)}
+
+/* ---------- variant pills (View page) ---------- */
+.variant-row{display:flex;flex-wrap:wrap;gap:8px}
+.variant-pill{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:6px 12px 6px 8px;border-radius:999px;
+  border:1px solid var(--line);background:var(--panel2);color:var(--fg);
+  font-size:12px;font-weight:600;cursor:pointer;
+  transition:background .15s,border-color .15s;
+}
+.variant-pill:hover{background:#1c1c22;border-color:#30303a}
+.variant-pill.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.variant-pill .vdot{width:12px;height:12px;cursor:inherit}
+
+/* =========================================================================
+   SVG keycaps (keySkin)
+   ========================================================================= */
+
+/* key becomes a positioning box that holds the svg + label */
+.kb-key.has-skin{
+  background:transparent !important;
+  border:0 !important;
+  border-radius:0 !important;
+  overflow:visible;
+  padding:0;
+  height:auto;
+  aspect-ratio:auto;
+}
+
+/* the svg should fill the key's flex slot */
+.kb-key.has-skin > svg.skin-svg{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  display:block;
+  pointer-events:none;
+  z-index:1;
+}
+
+/* label sits above the svg */
+.kb-key.has-skin > .label{
+  position:absolute;
+  z-index:3;
+  pointer-events:none;
+  line-height:1;
+  /* left/top/transform set inline from labelShift */
+}
+
+/* pressed transform for skin caps: translate down + squash, origin at pivot */
+.kb-key.has-skin.pressed-skin > svg.skin-svg{
+  transition: transform 70ms ease-out;
+  transform-box: fill-box;
+  transform-origin: 50% 94%; /* approximate pivot near bottom of keycap */
+  transform: translateY(11.6%) scaleY(0.87);
+}
+
+/* mini (card) sizing: keep skin svg crisp but cap the key row height */
+.kbd-stage:not(.big-stage) .kb-key.has-skin{
+  height:22px;
+  min-height:22px;
+}
+
+/* big (view) sizing */
+.big-stage .kb-key.has-skin{
+  height:46px;
+  min-height:46px;
+}
+
+/* board skin art layer (background art from keySkin.slots.board) */
+.skin-board{
+  position:absolute;
+  inset:0;
+  z-index:0;
+  pointer-events:none;
+  overflow:hidden;
+  opacity:.9;
+}
+.skin-board > svg.skin-svg{
+  width:100%;
+  height:100%;
+  display:block;
+}
