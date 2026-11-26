@@ -672,17 +672,19 @@ function buildKey(theme, k, { big, stage }){
       keyEl.style.borderRadius = '0';
       keyEl.insertBefore(svg, label);
 
-      // place label at labelShift (converted to % of slot h)
+            // Label anchor: center of inner face (~50% height) + labelShift y, in slot units.
+      // labelShift is an offset from the natural label center, not from the slot top.
       const [lx, ly] = art.labelShift;
+      const BASE_Y = art.h * 0.5;                 // natural center of the cap face
+      const labelY = BASE_Y + (Number(ly) || 0);  // apply downward shift
+      const labelX = art.w * 0.5 + (Number(lx) || 0);
       label.style.position = 'absolute';
-      label.style.left = '50%';
-      label.style.top = `${(ly / art.h) * 100}%`;
+      label.style.left = `${(labelX / art.w) * 100}%`;
+      label.style.top  = `${(labelY / art.h) * 100}%`;
       label.style.transform = 'translate(-50%,-50%)';
       label.style.color = cols.fg;
       label.style.zIndex = '3';
       if (theme.boldLabels) label.style.fontWeight = '700';
-      // label position is on the inner face — shift up to make room for the label area
-      // (slot labelShift uses same units as size; we treat it as y offset from top)
     }
   } else {
     // CSS rectangle fallback
